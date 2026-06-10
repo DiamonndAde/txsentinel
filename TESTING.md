@@ -1,282 +1,173 @@
 # TxSentinel — Step-by-Step Testing Guide
 
-This guide walks you through running TxSentinel from zero, testing every feature, and recording a demo video for the hackathon submission.
+This guide walks you through running TxSentinel from zero and exercising every feature.
 
 ---
 
-## Before You Start
-
-### What this project does (plain English)
+## What this project does (plain English)
 
 TxSentinel is a smart transaction tool for the Solana blockchain. It:
-1. **Watches the blockchain in real time** using a streaming connection (like a WebSocket, but for Solana — called Yellowstone gRPC). You see live slot numbers and estimated transactions-per-second.
-2. **Asks an AI** (DeepSeek R1) how much priority fee to attach to each transaction, based on current network congestion.
-3. **Builds and submits transactions** to Solana. On mainnet it uses Jito bundles (advanced atomic submissions). On devnet it uses regular RPC submission.
-4. **Tracks each transaction** through its four confirmation stages: Submitted → Processed → Confirmed → Finalized — recording the exact time each stage happens.
-5. **Shows everything in a live terminal dashboard** with six panels updating every 100ms.
+
+1. **Watches the blockchain in real time** using a streaming connection (Yellowstone gRPC, with automatic RPC fallback). You see live slot numbers and estimated transactions-per-second.
+2. **Asks an AI** (DeepSeek) how much priority fee to attach to each transaction, based on current network congestion and the live Jito tip market.
+3. **Builds and submits transactions** to Solana. On mainnet it uses Jito bundles (atomic submissions with tips). On devnet it falls back to regular RPC submission.
+4. **Tracks each transaction** through its four confirmation stages: Submitted → Processed → Confirmed → Finalized — recording the exact time of each transition.
+5. **Shows everything in a live terminal dashboard** with six panels.
 
 ---
 
-## Step 1: Get devnet SOL
+## Step 1: Prerequisites
 
-Your wallet address is: `8NRB2qCeHS7NFUQBi5zUXqCWQgfmuSrsTY8eDke34aTq`
+- Rust 1.75+ (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`)
+- A Solana keypair: `solana-keygen new` (created at `~/.config/solana/id.json`)
+- Devnet SOL: go to **https://faucet.solana.com**, paste your wallet address (`solana address`), select "Devnet", request 2 SOL
 
-Go to **https://faucet.solana.com**, paste that address, select "Devnet", and request 2 SOL. Do this before running the project.
+Verify your balance:
 
-You can verify your balance with:
 ```bash
 solana balance --url devnet
 ```
 
 ---
 
-## Step 2: Verify your `.env` file
+## Step 2: Configure `.env`
 
-Open `/home/diamondayo/work/hackathon/advanced-infrastructure-challenge/.env` and confirm it looks like this:
+Copy the template at the project root and fill in your keys:
+
+```bash
+cp .env.example .env
+```
 
 ```env
 RPC_URL="https://api.devnet.solana.com"
-GRPC_URL="fra.grpc.solinfra.dev:443"
-GRPC_X_TOKEN="<your SolInfra gRPC token>"
-JITO_BLOCK_ENGINE_URL="https://mainnet.block-engine.jito.wtf"
 NETWORK=devnet
+GRPC_URL="fra.grpc.solinfra.dev:443"
+GRPC_X_TOKEN="<your gRPC x-token>"
+JITO_BLOCK_ENGINE_URL="https://mainnet.block-engine.jito.wtf"
 DEEPSEEK_API_KEY=<your DeepSeek API key>
 DEEPSEEK_MODEL=deepseek-chat
 KEYPAIR_PATH=~/.config/solana/id.json
 ```
 
-The `NETWORK=devnet` line is what tells the program to use devnet mode (regular RPC instead of Jito).
+`NETWORK=devnet` activates devnet mode (regular RPC submission instead of Jito bundles).
 
 ---
 
-## Step 3: Build the project
+## Step 3: Build and run
 
 ```bash
-cd /home/diamondayo/work/hackathon/advanced-infrastructure-challenge/txsentinel
-cargo build 2>&1 | tail -5
-```
-
-You should see: `Finished dev profile [unoptimized + debuginfo] target(s) in ...`
-
-If you see errors, check the error message — most likely a missing env var or network issue.
-
----
-
-## Step 4: Run the TUI
-
-```bash
-cd /home/diamondayo/work/hackathon/advanced-infrastructure-challenge/txsentinel
+cd txsentinel
+cargo build
 cargo run
 ```
 
-The terminal will switch to a full-screen dashboard. You should see:
+The terminal switches to a full-screen dashboard. Within a few seconds you should see:
 
-**SLOT STREAM panel (top left)**
-- The slot number will start at 0 and begin updating once the gRPC connection to SolInfra establishes (takes 2-5 seconds)
-- TPS will show an estimated value once slots are flowing
+- **SLOT STREAM** (top left): live slot number (via gRPC, or RPC fallback within ~1s), estimated TPS, load level
+- **TIP MARKET** (top middle): live p25/p50/p75/p95/p99 Jito tip percentiles in lamports — real mainnet fee-market data, refreshed every 10s
+- **LEADER WINDOW** (top right): on devnet shows "Mode: RPC Fallback / READY (devnet)"; on mainnet shows slots until the next Jito leader
+- **Status bar** (bottom): current operation, then your wallet balance
 
-**TIP MARKET panel (top middle)**
-- Shows p25/p50/p75/p95/p99 tip percentiles in lamports
-- These are fetched from the Jito mainnet tip oracle (still works even on devnet — it's just showing you the current fee market data)
-- If the values are all 0, wait 10 seconds for the first fetch
-
-**LEADER WINDOW panel (top right)**
-- On devnet shows "Mode: RPC Fallback" and "READY (devnet)"
-- This would show Jito leader timing on mainnet
-
-**Status bar (bottom)**
-- Shows the current operation: "Starting TxSentinel...", then your wallet balance
+Diagnostic logs are written to `txsentinel.log` (tail it from another terminal if needed).
 
 ---
 
-## Step 5: Test a normal submission (`[s]` key)
+## Step 4: Test a normal submission (`s` key)
 
-Press `s` on your keyboard.
+Press `s`. What happens:
 
-What happens step by step:
-1. The status bar shows "AI agent deciding priority fee..."
-2. TxSentinel calls DeepSeek R1 with the current tip percentiles, TPS, and network health. This takes 3-15 seconds depending on DeepSeek API latency.
-3. The AI REASONING panel fills with DeepSeek's chain-of-thought (you can see it reasoning about congestion levels and which percentile to use)
-4. The last line in the reasoning panel shows: `-> Fee: 12000L  [p75]  (baseline: 5000L)` (numbers will vary)
-5. Status shows "Submitting via RPC -> [signature]..."
-6. The ACTIVE BUNDLES table gains a new row showing the bundle in SUBMITTED state
-7. The system polls for confirmation every 800ms
-8. The stage column updates: SUBMITTED → PROCESSED → CONFIRMED → FINALIZED
-9. When finalized, the "Bundles" counter in the slot panel increments
+1. Status bar: "AI agent deciding priority fee..."
+2. TxSentinel calls DeepSeek with the live tip percentiles, TPS, leader window, and recent landing rate (~3–8 seconds)
+3. The AI REASONING panel fills with the model's step-by-step analysis: which TPS band applies, which percentile to target, and the interpolation math if the target falls between known percentiles
+4. The final line shows the decision: `-> Fee: 12000L  [p75]  (baseline: 5000L)`
+5. The bundle is built and submitted; ACTIVE BUNDLES gains a row
+6. The stage advances: SUBMITTED → PROCESSED → CONFIRMED → FINALIZED
+7. On finalization, the "Bundles" counter increments
 
-**What to look for in the lifecycle log:**
-- The `->Proc`, `->Conf`, `->Fin` columns show the timing in milliseconds between each stage
-- Typical devnet timings: SUBMITTED→PROCESSED ~400ms, PROCESSED→CONFIRMED ~800ms, CONFIRMED→FINALIZED ~4000ms
+**In the lifecycle log**, the `→Proc`, `→Conf`, `→Fin` columns show per-stage timing. Typical devnet values: submit→processed ~1,100ms, processed→confirmed ~50–100ms, confirmed→finalized ~11–14s. The tiny processed→confirmed delta is the network-health signal discussed in the README.
 
-**If the submission fails:**
-- Usually means insufficient SOL — go to step 1 and get devnet SOL
-- Could also be a transient RPC error — wait 5 seconds and try again
+Scroll the AI panel with `j` (down) and `k` (up) to read the full reasoning.
 
 ---
 
-## Step 6: Submit 3-4 more normal bundles
+## Step 5: Test fault injection (`f` then `s`)
 
-Press `s` three more times (wait for each one to finish or at least reach CONFIRMED before the next). This builds up a history in the lifecycle log that shows meaningful data.
+This exercises the AI failure-recovery path by deliberately breaking a transaction.
 
-After 4-5 submissions you'll see:
-- Multiple rows in the LIFECYCLE LOG panel
-- Consistent timing patterns in the Δ columns
-- The AI reasoning adapting its tip recommendation based on recent landing rates
+1. Press `f` — an invalid blockhash is queued (one that cannot exist on the ledger, so failure is guaranteed)
+2. Press `s` — the bundle is built and signed with the bad blockhash
+3. The submission fails: status shows `Failed: BlockhashExpired`, and the lifecycle log gets a red FAILED entry with `BlockhashExpiry` in the Fault column
+4. The AI diagnoses the failure in the reasoning panel — identifying the blockhash expiry, deciding to retry, and often bumping the fee
+5. The retry resubmits with a fresh blockhash and lands on-chain as a new entry
 
----
-
-## Step 7: Test fault injection (`[f]` then `[s]`)
-
-This tests the AI retry path — it deliberately breaks a transaction to show the system can detect and recover from failures.
-
-**How it works:**
-1. Press `f` — the status bar shows "Fault injected — next [s]ubmit will use stale blockhash"
-   - Internally, the program captures the *current* blockhash and holds onto it
-   - On Solana, a blockhash is only valid for ~150 slots (about 60-90 seconds)
-   - By using this "stale" blockhash for the next submission, the transaction will be rejected with a `BlockhashNotFound` error
-
-2. Wait a few seconds (or not — even a recent blockhash being "stale" to the intent of the fault)
-
-3. Press `s` — the status shows "Fault injected — building bundle with stale blockhash..."
-
-4. The submission fails. You'll see in the status bar: `Failed: BlockhashExpired` (or similar)
-
-5. The AI REASONING panel shows DeepSeek's analysis of the failure:
-   - It identifies this as a blockhash expiry
-   - It decides whether to retry immediately or wait
-   - It may recommend bumping the fee
-
-6. The AI decides to retry with a fresh blockhash — you'll see "Retrying with fresh blockhash..."
-
-7. The retry submission goes through normally and lands on-chain
-
-**In the LIFECYCLE LOG:**
-- The failed entry shows `FAILED` in red
-- The `Fault` column shows `BlockhashExpiry`
-- The successful retry shows as a new row with no fault
+The panel keeps both the failure diagnosis and the retry reasoning visible — the full story of fail → diagnose → recover from one keypress.
 
 ---
 
-## Step 8: Generate 10+ lifecycle log entries
+## Step 6: Build up the lifecycle log
 
-For a compelling demo, aim for at least 10 entries in the lifecycle log (mix of successful and a couple of fault-injection failures):
+For a representative session, generate 10+ entries with a mix of outcomes:
 
-1. Submit 4 normal bundles with `s`
-2. Inject a fault and retry: `f`, then `s`
-3. Submit 3 more normal bundles: `s`, `s`, `s`
-4. Inject another fault: `f`, then `s`
-5. Submit 2 more: `s`, `s`
+1. Submit 4 normal bundles (`s`, waiting for each to confirm)
+2. Inject a fault and watch the retry (`f`, `s`)
+3. Submit 3 more (`s` × 3)
+4. Inject another fault (`f`, `s`)
+5. Submit 2 more (`s` × 2)
 
-This gives you 10+ entries in the log with a variety of stages and timing data. The counterfactual ledger columns (AI Tip vs Baseline) will show the AI varying its recommendation based on conditions.
+Watch the **AI Tip vs Baseline** columns: the baseline is always the naive p50, while the AI's choice varies with conditions. Under high TPS the gap can be 10–100× — that spread is the counterfactual ledger demonstrating the AI adds measurable value over a fixed strategy.
 
 ---
 
-## Step 9: Read the SQLite database (optional, shows persistence)
+## Step 7: Inspect the SQLite persistence (optional)
 
-The lifecycle log is persisted to `txsentinel.db` in the project directory. To inspect it from a separate terminal (while TxSentinel is running):
+The lifecycle log is persisted to `txsentinel.db`. From a separate terminal:
 
 ```bash
-cd /home/diamondayo/work/hackathon/advanced-infrastructure-challenge/txsentinel
-sqlite3 txsentinel.db "SELECT signature, stage, tip_lamports, ai_tip_decision, baseline_tip, processed_to_confirmed_ms, injected_fault FROM bundle_entries ORDER BY submitted_at DESC LIMIT 10;" 2>/dev/null || \
-sqlite3 txsentinel.db ".tables"
+cd txsentinel
+sqlite3 txsentinel.db "SELECT signature, stage, tip_lamports, ai_tip_decision, baseline_tip, processed_to_confirmed_ms, injected_fault FROM bundle_entries ORDER BY submitted_at DESC LIMIT 10;"
 ```
 
-This shows the counterfactual ledger — you can see every AI tip decision alongside the p50 baseline it was compared against.
+Every row stores the AI decision, the p50 baseline it was compared against, full stage timings, and any injected fault.
+
+You can also verify any signature on-chain at `https://explorer.solana.com/?cluster=devnet`.
 
 ---
 
-## Step 10: Quit
+## Step 8: Quit
 
-Press `q` to exit the TUI cleanly. The terminal returns to normal.
-
----
-
-## Recording the Demo Video
-
-Yes, you should record a video for the submission. Judges watch videos before reading code. A 2-3 minute video showing the live dashboard is more compelling than screenshots.
-
-### What to record
-
-**Section 1 (30 seconds): Show the dashboard loading**
-- Run `cargo run` and narrate: "This is TxSentinel — a smart transaction stack built in Rust. You can see the slot stream connecting to Solana via Yellowstone gRPC on the left, the live Jito tip market in the middle, and the leader window on the right."
-
-**Section 2 (60 seconds): First submission**
-- Press `s`, narrate: "I'm pressing s to submit a bundle. TxSentinel is now calling the DeepSeek R1 AI to decide the optimal priority fee based on current network conditions."
-- While DeepSeek responds: "Watch the AI REASONING panel — this is the actual chain-of-thought from DeepSeek R1, evaluating the congestion level and tip percentiles."
-- When the decision appears: "The AI chose p75 — 12,000 lamports — because TPS is elevated. The p50 baseline would be 5,000 lamports. That difference is the counterfactual ledger in action."
-- When it finalizes: "Transaction finalized in 5.2 seconds. The lifecycle log shows the exact millisecond timing at each confirmation stage."
-
-**Section 3 (30 seconds): Fault injection**
-- Press `f`: "Now I'm injecting a fault — deliberately using a stale blockhash."
-- Press `s`: "Submitting with the stale hash..."
-- When it fails: "BlockhashExpired — expected. Now watch the AI diagnose this and retry."
-- When it retries successfully: "The AI identified the failure, fetched a fresh blockhash, and resubmitted. All of this is autonomous."
-
-**Section 4 (20 seconds): Show the lifecycle log**
-- Scroll through the entries if possible, narrate: "The lifecycle log persists everything to SQLite. Every bundle has its full timing data, AI decision, and the p50 baseline for comparison."
-
-### How to record
-
-**Option A — OBS Studio (recommended):**
-```bash
-# Install if needed
-sudo apt install obs-studio
-# Open OBS, add a "Window Capture" source pointing to your terminal
-# Start recording before running cargo run
-```
-
-**Option B — built-in screen record (Linux):**
-```bash
-# Using ffmpeg to record screen
-ffmpeg -video_size 1920x1080 -framerate 30 -f x11grab -i :0.0 demo.mp4
-# Press Ctrl+C to stop recording
-```
-
-**Option C — WSL with Windows:**
-- Use Windows Game Bar: Win+G → click record
-- Or Xbox Game Bar: Win+Alt+R to start/stop recording
-- The recording will be in `~/Videos/Captures/`
-
-### Video tips
-- Use a terminal with a dark theme (the TUI looks best on dark background)
-- Increase font size so the panels are readable in the recording
-- Record at 1080p minimum
-- Keep narration calm and technical — judges are engineers
-- Upload to YouTube (unlisted is fine) or Loom and include the link in your Superteam submission
+Press `q`. The terminal returns to normal. (If the display ever looks corrupted, run `reset`.)
 
 ---
 
 ## Troubleshooting
 
 **"Missing env var: RPC_URL"**
-→ Make sure `.env` is in the `txsentinel/` directory (not the parent). Copy it: `cp ../.env .env`
+→ Ensure `.env` exists at the project root (the app searches parent directories automatically).
 
-**Slot numbers stuck at 0**
-→ The gRPC connection to SolInfra may be failing. Check your `GRPC_X_TOKEN`. The program will keep retrying every 2 seconds — you may see an error in the status bar. The rest of the app still works (tip oracle and submissions don't need gRPC).
+**Slot number stuck at "connecting..."**
+→ Both gRPC and RPC are unreachable — check your network. Normally the RPC fallback populates the slot within ~1 second even if gRPC is down.
+
+**TPS shows a value but gRPC errors appear in `txsentinel.log`**
+→ Expected when the gRPC provider is degraded: TPS is being derived from RPC slot-delta polling. The gRPC stream takes over automatically once it connects.
 
 **"Failed to read keypair"**
-→ Run `solana-keygen new` to create a keypair at the default path, or update `KEYPAIR_PATH` in `.env`.
+→ Run `solana-keygen new`, or point `KEYPAIR_PATH` in `.env` at your keypair file.
 
 **Transaction fails with "insufficient funds"**
-→ Get devnet SOL: visit `https://faucet.solana.com` and airdrop 2 SOL to `8NRB2qCeHS7NFUQBi5zUXqCWQgfmuSrsTY8eDke34aTq`
+→ Get devnet SOL from `https://faucet.solana.com`.
 
-**DeepSeek API taking too long (> 30 seconds)**
-→ This is normal for the `deepseek-reasoner` model's chain-of-thought. If it times out, the submission will fail. You can try again — the AI call typically completes in 5-15 seconds.
-
-**Terminal looks corrupted after quit**
-→ Run `reset` in the terminal to restore normal display.
+**AI call times out**
+→ Calls have a 45s hard timeout. `deepseek-chat` typically responds in 3–8s; `deepseek-reasoner` (R1) can take 1–2 minutes due to its chain-of-thought. Use `deepseek-chat` for interactive sessions.
 
 ---
 
-## What the Judges Are Looking For
+## Feature → Requirement Map
 
-Based on the bounty requirements:
-
-1. **Real Yellowstone gRPC integration** — shown by the live slot numbers updating in real time
-2. **Jito bundle construction with dynamic tips** — shown by the bundle builder code and the TIP MARKET panel displaying live percentiles
-3. **AI agent making real decisions** — shown by the DeepSeek reasoning panel with actual chain-of-thought, and tip values that vary based on network conditions
-4. **Full lifecycle tracking** — shown by the LIFECYCLE LOG with timestamps at each stage
-5. **Failure handling and retry** — shown by the fault injection demo
-6. **Counterfactual ledger** — shown by the AI Tip vs Baseline columns in the tables
-
-The key thing to emphasize: **the AI is not decorative**. It reads real on-chain data (tip percentiles, TPS, landing rates) and produces decisions that demonstrably differ from a naive p50 strategy.
+| Bounty requirement | Where to see it |
+|---|---|
+| Yellowstone gRPC slot streaming | SLOT STREAM panel (live slot/TPS); `src/slot_monitor.rs` |
+| Jito bundle construction + dynamic tips | `src/bundle/builder.rs`, TIP MARKET panel (live tip-floor percentiles) |
+| AI agent making real decisions | AI REASONING panel — decisions vary with live conditions, never hardcoded |
+| Full lifecycle tracking | LIFECYCLE LOG with per-stage millisecond timings |
+| Failure classification + retry | Fault injection demo (`f` + `s`) |
+| Counterfactual ledger | AI Tip vs Baseline columns; persisted in `txsentinel.db` |
