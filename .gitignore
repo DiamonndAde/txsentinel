@@ -1,0 +1,20 @@
+# Secrets — never commit
+.env
+*.env
+!.env.example
+
+# Runtime artifacts from testing
+*.db
+*.log
+
+# Rust build output
+txsentinel/target/
+
+# Tooling / local config
+.claude/
+.agents/
+skills-lock.json
+
+# Solana keypairs (if ever copied here)
+id.json
+*-keypair.json

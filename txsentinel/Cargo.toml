@@ -1,0 +1,53 @@
+[package]
+name = "txsentinel"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "txsentinel"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+futures = "0.3"
+
+# Solana 2.1+ uses curve25519-dalek 4.x (zeroize 1.7 compatible)
+solana-sdk = "2.1"
+
+# Yellowstone gRPC latest (no solana-sdk dep, uses tonic 0.14)
+yellowstone-grpc-client = "13.1"
+yellowstone-grpc-proto = "12.4"
+
+# HTTP (Jito JSON-RPC + DeepSeek API)
+reqwest = { version = "0.12", features = ["json", "native-tls"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bincode = "1"
+base64 = "0.22"
+bs58 = "0.5"
+
+# SQLite lifecycle log
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# TUI
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+
+# Config
+dotenvy = "0.15"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
